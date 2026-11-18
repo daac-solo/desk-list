@@ -1,0 +1,320 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>桌面清单</title>
+<style>
+/* ---- 南山 / 夜山 ----------------------------------------------
+   取自 ~/tools/signal-flow/brand/tokens.css。原型里是副本，做成
+   桌面挂件时直接读那份，不在这里另立一套。 */
+:root{
+  --bg:#f9f9f8; --paper:#fdfdfc; --fg:#1d3e56; --muted:#63635e;
+  --surface:rgba(0,0,0,0.016); --faint:rgba(0,0,0,0.052);
+  --border:rgba(0,0,0,0.151);
+  --accent:#00749e; --accent-soft:rgba(0,171,234,0.096);
+  --green:#2a7e3b; --green-soft:rgba(0,142,0,0.072);
+  --alarm:#c0481f;
+  --pane:rgba(255,253,249,0.72);
+  --font:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+  --r:11px; --ease:cubic-bezier(.2,0,0,1);
+  --t1:11px; --t2:13px; --t3:17px;
+  --hair:1px;
+}
+@media(min-resolution:2dppx){:root{--hair:0.5px}}
+@media(prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#111113; --paper:#b9b6af; --fg:#eeeeec; --muted:#b0b4ba;
+    --surface:rgba(255,255,255,0.034); --faint:rgba(255,255,255,0.076);
+    --border:rgba(255,255,255,0.186);
+    --accent:#75c7f0; --accent-soft:rgba(0,166,255,0.099);
+    --green:#71d083; --green-soft:rgba(0,166,80,0.14);
+    --alarm:#ff9478;
+    --pane:rgba(24,29,33,0.55);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#111113; --paper:#b9b6af; --fg:#eeeeec; --muted:#b0b4ba;
+  --surface:rgba(255,255,255,0.034); --faint:rgba(255,255,255,0.076);
+  --border:rgba(255,255,255,0.186);
+  --accent:#75c7f0; --accent-soft:rgba(0,166,255,0.099);
+  --green:#71d083; --green-soft:rgba(0,166,80,0.14);
+  --alarm:#ff9478; --pane:rgba(24,29,33,0.55);
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html{overscroll-behavior:none}
+/* 页面只是替身：真正的挂件后面是你的壁纸。这里铺一层有明暗起伏的
+   底，否则玻璃压在纯色上看不出是玻璃。 */
+body{
+  font-family:var(--font);background:var(--bg);color:var(--fg);
+  min-height:100vh;display:grid;place-items:center;padding:40px 20px;
+  -webkit-font-smoothing:antialiased;
+}
+body::before{
+  content:'';position:fixed;inset:0;z-index:-1;
+  background:
+    radial-gradient(70% 55% at 18% 12%, var(--accent-soft), transparent 70%),
+    radial-gradient(60% 50% at 82% 20%, var(--green-soft), transparent 72%),
+    radial-gradient(80% 60% at 50% 100%, var(--faint), transparent 70%);
+}
+
+/* ---- 挂件本体 ---- */
+.w{
+  width:min(320px,100%);
+  background:var(--pane);
+  -webkit-backdrop-filter:blur(30px) saturate(180%);
+  backdrop-filter:blur(30px) saturate(180%);
+  border:var(--hair) solid var(--border);
+  border-radius:16px;
+  box-shadow:0 1px 2px rgba(0,0,0,.05), 0 18px 36px -14px rgba(0,0,0,.28);
+  overflow:hidden;
+}
+@supports (corner-shape: squircle){ .w{corner-shape:squircle} }
+
+.hd{display:flex;align-items:baseline;gap:8px;padding:16px 16px 0}
+.hd h1{font-size:var(--t3);font-weight:600;letter-spacing:-.01em}
+.n{
+  font-size:var(--t1);color:var(--muted);margin-left:auto;
+  font-variant-numeric:tabular-nums;
+}
+.fold{
+  font:inherit;font-size:var(--t1);color:var(--muted);
+  background:none;border:0;cursor:pointer;line-height:1;
+  width:24px;height:24px;display:grid;place-items:center;
+  margin:-4px -4px -4px 0;border-radius:8px;
+}
+.fold:hover{background:var(--faint);color:var(--fg)}
+.fold:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.fold svg{display:block;transition:transform 220ms var(--ease)}
+.w.shut .fold svg{transform:rotate(-90deg)}
+
+.body{display:grid;grid-template-rows:1fr;transition:grid-template-rows 260ms var(--ease)}
+.w.shut .body{grid-template-rows:0fr}
+.body>div{overflow:hidden;min-height:0}
+
+/* ---- 输入 ---- */
+.in{
+  width:100%;font:inherit;font-size:var(--t2);color:var(--fg);
+  background:var(--surface);border:var(--hair) solid var(--border);
+  border-radius:8px;padding:8px 12px;margin:12px 16px 0;width:calc(100% - 32px);
+  transition:border-color 140ms linear,background 140ms linear;
+}
+/* 不加不透明度：muted 本身就是"次要"的意思，再乘 0.75 只会把
+   它压到 3.41:1，而这是文字，门槛 4.5。 */
+.in::placeholder{color:var(--muted)}
+.in:focus{outline:none;border-color:var(--accent);background:var(--accent-soft)}
+
+/* ---- 清单 ---- */
+ol{list-style:none;counter-reset:t;padding:8px 8px 4px;max-height:340px;overflow-y:auto}
+li{
+  counter-increment:t;
+  display:grid;grid-template-columns:16px 1fr 24px 24px;
+  align-items:start;gap:8px;
+  padding:4px 8px;border-radius:8px;
+}
+li:hover{background:var(--faint)}
+li::before{
+  content:counter(t);
+  font-size:var(--t1);color:var(--muted);
+  font-variant-numeric:tabular-nums;text-align:right;
+  padding-top:6px;
+}
+.tx{
+  font-size:var(--t2);line-height:1.5;overflow-wrap:anywhere;
+  position:relative;width:fit-content;max-width:100%;
+  transition:color 300ms linear;
+  cursor:text;
+  /* 把第一行压到和圆圈同一条中线上。几何居中在这里是错的 ——
+     行高把字撑高了，眼睛看的是字不是行盒。 */
+  padding-top:2px;
+}
+/* 完成不是消失，是一道横穿字的线。画出来的，不是 line-through ——
+   那样没法控制它多久画完。 */
+.tx::after{
+  content:'';position:absolute;left:0;top:50%;height:var(--hair);
+  width:100%;background:currentColor;
+  transform:scaleX(0);transform-origin:left;
+  transition:transform 300ms var(--ease);
+}
+li.ok .tx{color:var(--muted)}
+li.ok .tx::after{transform:scaleX(1)}
+
+/* 勾在尾，和序号分列两端 */
+/* 描边用 muted，不用 border。--border 是分隔线的粗细感，1.42:1 ——
+   分隔线淡可以，但这是整个挂件唯一要点的东西，非文字控件的门槛是
+   3:1，它差着一倍。淡到看不见的按钮和没有按钮是一回事。 */
+.box{
+  width:24px;height:24px;border-radius:999px;cursor:pointer;
+  background:none;border:var(--hair) solid var(--muted);
+  display:grid;place-items:center;padding:0;
+  transition:border-color 160ms linear,background 160ms linear;
+}
+.box:hover{border-color:var(--accent)}
+.box:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.box svg{width:11px;height:11px;display:block}
+.box path{
+  fill:none;stroke:var(--green);stroke-width:2.4;
+  stroke-linecap:round;stroke-linejoin:round;
+  stroke-dasharray:16;stroke-dashoffset:16;
+}
+li.ok .box{border-color:var(--green);background:var(--green-soft)}
+li.ok .box path{animation:draw 300ms var(--ease) forwards}
+@keyframes draw{to{stroke-dashoffset:0}}
+
+.x{
+  font:inherit;font-size:var(--t1);line-height:1;
+  width:24px;height:24px;
+  background:none;border:0;border-radius:8px;cursor:pointer;
+  color:var(--muted);opacity:0;
+  transition:opacity 120ms linear,color 120ms linear;
+}
+li:hover .x,.x:focus-visible{opacity:1}
+.x:hover{color:var(--alarm)}
+.x:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+
+.none{padding:24px 16px;text-align:center;font-size:var(--t2);color:var(--muted)}
+
+.ft{
+  display:flex;padding:0 16px 12px;
+}
+.clr{
+  font:inherit;font-size:var(--t1);color:var(--muted);
+  background:none;border:0;cursor:pointer;padding:4px 8px;margin-left:auto;
+  border-radius:8px;min-height:24px;display:inline-flex;align-items:center;
+}
+.clr:hover{background:var(--faint);color:var(--alarm)}
+.clr:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.clr[hidden]{display:none}
+
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:1ms!important;transition-duration:1ms!important}
+  li.ok .box path{stroke-dashoffset:0}
+}
+</style>
+
+<div class="w" id="w">
+  <div class="hd">
+    <h1>任务</h1>
+    <span class="n" id="n"></span>
+    <button class="fold" id="fold" aria-expanded="true" aria-controls="body" aria-label="收起">
+      <svg width="11" height="11" viewBox="0 0 11 11" aria-hidden="true">
+        <path d="M2.5 4 L5.5 7 L8.5 4" fill="none" stroke="currentColor"
+              stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+  </div>
+
+  <div class="body" id="body"><div>
+    <input class="in" id="in" placeholder="写一行，回车" autocomplete="off"
+           aria-label="新任务">
+    <ol id="list"></ol>
+    <div class="ft"><button class="clr" id="clr" hidden>清掉已完成</button></div>
+  </div></div>
+</div>
+
+<script>
+const KEY = 'desk-list';
+let tasks = [];
+try { tasks = JSON.parse(localStorage.getItem(KEY)) || []; } catch {}
+
+const $list = document.getElementById('list');
+const $in   = document.getElementById('in');
+const $n    = document.getElementById('n');
+const $clr  = document.getElementById('clr');
+const $w    = document.getElementById('w');
+const $fold = document.getElementById('fold');
+
+// 写了就得存上，存不上要让人看见 —— 一个记东西的工具，默默丢掉
+// 你刚写的那条，和它根本没在跑是一回事。
+function save(){
+  try {
+    localStorage.setItem(KEY, JSON.stringify(tasks));
+    return true;
+  } catch (e) {
+    $in.placeholder = '没存上：' + (e.name || '未知');
+    return false;
+  }
+}
+
+function render(){
+  $list.innerHTML = '';
+  if (!tasks.length){
+    const d = document.createElement('div');
+    d.className = 'none';
+    d.textContent = '还没有任务';
+    $list.appendChild(d);
+  }
+  tasks.forEach((t, i) => {
+    const li = document.createElement('li');
+    li.className = t.ok ? 'ok' : '';
+
+    const box = document.createElement('button');
+    box.className = 'box';
+    box.setAttribute('role', 'checkbox');
+    box.setAttribute('aria-checked', String(!!t.ok));
+    box.setAttribute('aria-label', t.text);
+    box.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true">'
+                  + '<path d="M2 6.4 L4.6 9 L10 3.2"/></svg>';
+    box.onclick = () => { tasks[i].ok = !tasks[i].ok; save(); render(); };
+
+    const tx = document.createElement('div');
+    tx.className = 'tx';
+    tx.textContent = t.text;
+    // 打错字总会发生。双击改，回车或点别处收手。
+    tx.ondblclick = () => {
+      tx.contentEditable = 'plaintext-only';
+      tx.focus();
+      document.execCommand('selectAll', false, null);
+    };
+    tx.onblur = () => {
+      tx.contentEditable = 'false';
+      const v = tx.textContent.trim();
+      if (v) { tasks[i].text = v; save(); } else { render(); }
+    };
+    tx.onkeydown = e => {
+      if (e.key === 'Enter'){ e.preventDefault(); tx.blur(); }
+      if (e.key === 'Escape'){ tx.textContent = tasks[i].text; tx.blur(); }
+    };
+
+    const x = document.createElement('button');
+    x.className = 'x';
+    x.textContent = '✕';
+    x.setAttribute('aria-label', '删除 ' + t.text);
+    x.onclick = () => { tasks.splice(i, 1); save(); render(); };
+
+    li.append(tx, box, x);
+    $list.appendChild(li);
+  });
+
+  const left = tasks.filter(t => !t.ok).length;
+  $n.textContent = left ? '还剩 ' + left : '';
+  $clr.hidden = !tasks.some(t => t.ok);
+}
+
+// 一行一个任务。粘贴一整段的时候这尤其要紧 —— 把五行粘进来，
+// 应该得到五个任务，而不是一个很长的任务。
+function add(raw){
+  const lines = raw.split('\n').map(s => s.trim()).filter(Boolean);
+  if (!lines.length) return;
+  lines.forEach(text => tasks.push({ text, ok: false }));
+  save();
+  render();
+}
+
+$in.onkeydown = e => {
+  if (e.key === 'Enter'){ add($in.value); $in.value = ''; }
+  if (e.key === 'Escape'){ $in.value = ''; }
+};
+$in.onpaste = e => {
+  const t = (e.clipboardData || window.clipboardData).getData('text');
+  if (t && t.includes('\n')){ e.preventDefault(); add(t); $in.value = ''; }
+};
+$clr.onclick = () => { tasks = tasks.filter(t => !t.ok); save(); render(); };
+$fold.onclick = () => {
+  const shut = $w.classList.toggle('shut');
+  $fold.setAttribute('aria-expanded', String(!shut));
+  $fold.setAttribute('aria-label', shut ? '展开' : '收起');
+};
+
+render();
+$in.focus();
+</script>

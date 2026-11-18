@@ -1,0 +1,6 @@
+pyobjc-core
+pyobjc-framework-Cocoa
+pyobjc-framework-Quartz
+rumps
+py2app
+mac-desk-kit @ git+https://github.com/daac-solo/mac-desk-kit
