@@ -178,7 +178,7 @@ class Widget(object):
             return
 
         y -= 12 + 32
-        self.field = AppKit.NSTextField.alloc().initWithFrame_(
+        self.field = k.FocusField.alloc().initWithFrame_(
             NSMakeRect(PAD, y, W - PAD * 2, 32))
         self.field.setFont_(k.font(T2))
         self.field.setTextColor_(pal["fg"])
@@ -374,6 +374,8 @@ class App(rumps.App):
             rumps.notification("桌面清单", "", "启动出错，看终端")
 
     def _post(self):
+        # Without this ⌘V does nothing in the field, silently.
+        k.install_menu("退出桌面清单")
         self.w = Widget()
         self.w.focus()
         try:
@@ -413,6 +415,17 @@ class Delegate(NSObject):
 
     def clear_(self, _s):
         self.w.clear_done()
+
+    def controlTextDidChange_(self, note):
+        """A single-line NSTextField flattens a multi-line paste into one
+        string, so "five lines pasted" would have become one very long
+        task. Catch it here instead: if what just landed has line breaks,
+        it was a paste, and it is five tasks."""
+        control = note.object()
+        raw = control.stringValue()
+        if "\n" in raw or "\r" in raw:
+            control.setStringValue_("")
+            self.w.add(raw)
 
     def control_textView_doCommandBySelector_(self, control, view, selector):
         name = selector.name() if hasattr(selector, "name") else str(selector)
