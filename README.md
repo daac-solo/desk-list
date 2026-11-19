@@ -4,7 +4,11 @@ A task list that lives on the macOS desktop. Type a line, press Return.
 Click the circle when it's done — the task doesn't disappear, it gets a
 line drawn through it and stays.
 
-![桌面清单](screenshot.png)
+![桌面清单](demo-typing.png)
+
+写到一半它就告诉你听懂了什么 —— `周四` 在右边浮成 `↑ 明天`。
+
+![完成](demo-done.png)
 
 南山（浅）/ 夜山（深）跟随系统。
 
