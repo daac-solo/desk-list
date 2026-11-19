@@ -48,6 +48,29 @@ Security → Accessibility). Everything else works without it. Permission is
 granted to a binary, so after rebuilding the app you may have to remove
 and re-add it rather than just re-ticking the box.
 
+## Time, without a date picker
+
+Type `约牙医 周四` and 周四 lifts out of the title into a chip. There is no
+date picker because you already typed the time — asking you to then click
+it is asking the same question twice. The guess shows up in the field
+while you are still typing, so a parser that heard wrong is one you can
+fix before you commit, not after.
+
+Only the tail of the line is read: `周一的会议纪要` keeps its 周一, because
+that one is part of the sentence. `check-when.py` has 36 cases and the
+must-not-match group is as large as the must-match group — the dangerous
+failure is not "did not understand", it is "understood something you
+never wrote".
+
+```sh
+python3 check-when.py        # the parser, deterministic
+./.venv/bin/python smoke-input.py   # typing / ⌘V / focus, by hand
+```
+
+`smoke-input.py` is a smoke script, not a gate: synthetic keystrokes race
+AppKit's focus handling and the same build can score differently on
+consecutive runs. It prints; you judge.
+
 ## Design
 
 Colours, radius and the three type sizes come from
