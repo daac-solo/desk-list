@@ -78,6 +78,7 @@ class RowView(AppKit.NSView):
             self.kill = None
             self.hot = False
             self.tint = None
+            self.text = None
         return self
 
     def updateTrackingAreas(self):
@@ -98,6 +99,18 @@ class RowView(AppKit.NSView):
             self.layer().setBackgroundColor_(
                 self.tint.CGColor() if self.hot else None)
 
+    def mouseDown_(self, event):
+        """A text field that is neither editable nor selectable never
+        receives mouseDown at all — AppKit routes the click past it. So
+        the row takes the double click and hands it to its own text.
+
+        Single clicks still fall through, which is what keeps the whole
+        panel draggable from anywhere."""
+        if event.clickCount() >= 2 and self.text is not None:
+            self.text.begin()
+            return
+        objc.super(RowView, self).mouseDown_(event)
+
     def mouseEntered_(self, _e):
         self.hot = True
         self._paint()
@@ -111,6 +124,51 @@ def _centered():
     ps = AppKit.NSMutableParagraphStyle.alloc().init()
     ps.setAlignment_(AppKit.NSTextAlignmentCenter)
     return ps
+
+
+class TaskText(AppKit.NSTextField):
+    """The task's own words, editable in place.
+
+    Everything else about a task could be changed — ticked, dated,
+    deleted — except the one thing you are most likely to get wrong,
+    which is what you typed. The only fix was to delete it and write it
+    again.
+
+    Double click, because a single click on a row should stay harmless:
+    the rows are small and sit next to a checkbox.
+    """
+
+    def initWithFrame_(self, frame):
+        self = objc.super(TaskText, self).initWithFrame_(frame)
+        if self is not None:
+            self.idx = -1
+            self.owner = None
+            self.was = ""
+        return self
+
+    @objc.python_method
+    def begin(self):
+        if self.owner is None or self.isEditable():
+            return
+        self.was = self.stringValue()
+        self.setEditable_(True)
+        self.setSelectable_(True)
+        win = self.window()
+        if win is not None:
+            k.take_focus(win, self)
+            self.selectText_(None)
+
+    @objc.python_method
+    def finish(self, keep):
+        if not self.isEditable():
+            return
+        text = self.stringValue().strip() if keep else ""
+        self.setEditable_(False)
+        self.setSelectable_(False)
+        if keep and text and text != self.was:
+            self.owner.retext(self.idx, text)
+        else:
+            self.owner.render()
 
 
 class Offer(NSObject):
@@ -320,6 +378,9 @@ class Row(NSObject):
 
     def kill_(self, _sender):
         self.owner.remove(self.i)
+
+    def bump_(self, _sender):
+        self.owner.bump(self.i)
 
 
 
@@ -597,14 +658,26 @@ class Widget(object):
                 pal["muted"].colorWithAlphaComponent_(0.22).CGColor())
             self.ground.addSubview_(line)
 
-        num = k.label(str(i + 1), T1, pal["muted"])
-        # Tabular figures: 1 and 10 have to occupy the same width or the
-        # column wanders.
+        # The number carries the priority. It is the one glyph on the row
+        # with no other job, so colouring it adds no chrome at all — and a
+        # list where every row wears a badge has no emphasis left to give.
+        lv = int(t.get("p") or 0)
+        pcol = (pal["muted"], pal["accent"], pal["alarm"])[min(lv, 2)]
+        cap = timeword.mark(lv) or str(i + 1)
+        num = k.label(cap, T1, pcol)
         num.setFont_(AppKit.NSFont.monospacedDigitSystemFontOfSize_weight_(
-            T1, AppKit.NSFontWeightRegular))
+            T1, AppKit.NSFontWeightBold if lv else AppKit.NSFontWeightRegular))
         num.setAlignment_(AppKit.NSTextAlignmentRight)
         num.setFrame_(NSMakeRect(0, 5, 16, T1 + 6))
         rv.addSubview_(num)
+
+        bump = AppKit.NSButton.alloc().initWithFrame_(NSMakeRect(0, 2, 20, 22))
+        bump.setBordered_(False)
+        bump.setTitle_("")
+        bump.setTarget_(r)
+        bump.setAction_("bump:")
+        bump.setToolTip_("普通 / 重要 / 紧急")
+        rv.addSubview_(bump)
 
         # The line goes through the characters, which is the point of
         # finishing something here: it stays on the list, crossed out.
@@ -623,15 +696,19 @@ class Widget(object):
         if t.get("when"):
             _c = k.label(timeword.label(t["when"], t.get("clock", "")), T1, pal["muted"])
             avail -= round(_c.intrinsicContentSize().width) + 18
-        tx = AppKit.NSTextField.alloc().initWithFrame_(
+        tx = TaskText.alloc().initWithFrame_(
             NSMakeRect(24, 3, max(avail, 60), 22))
+        tx.idx, tx.owner = i, self
+        rv.text = tx
+        tx.setDelegate_(self.delegate)
         tx.setAttributedStringValue_(body)
         tx.setBackgroundColor_(AppKit.NSColor.clearColor())
         tx.setBezeled_(False)
         tx.setEditable_(False)
         tx.setSelectable_(False)
+        tx.setFocusRingType_(AppKit.NSFocusRingTypeNone)
         tx.setLineBreakMode_(AppKit.NSLineBreakByTruncatingTail)
-        tx.setToolTip_(t["text"])
+        tx.setToolTip_("双击改字")
         rv.addSubview_(tx)
 
         # The line is a layer, not a text attribute.
@@ -739,6 +816,7 @@ class Widget(object):
         if not lines:
             return
         for text in lines:
+            text, lv = timeword.priority(text)
             title, iso, clock, _ = timeword.parse(text)
             # A tap beats a guess: if you pressed 明天, that is the answer,
             # whatever the sentence happens to contain.
@@ -746,7 +824,7 @@ class Widget(object):
                 iso = self.pending
                 clock = self.pending_clock or clock
             self.items.append({"text": title, "ok": False, "done_on": "",
-                               "when": iso, "clock": clock})
+                               "when": iso, "clock": clock, "p": lv})
         self.pending = ""
         self.pending_clock = ""
         if self.commit():
@@ -802,6 +880,30 @@ class Widget(object):
         self.pending = ("" if self.pending == iso else iso) if toggle else iso
         raw = self.field.stringValue() if self.field is not None else ""
         self.reflow(raw)
+
+    def bump(self, i):
+        if not (0 <= i < len(self.items)):
+            return
+        self.items[i]["p"] = (int(self.items[i].get("p") or 0) + 1) % 3
+        if self.commit():
+            self.render()
+
+    def retext(self, i, text):
+        if not (0 <= i < len(self.items)):
+            return
+        # The time words are read again, so fixing a typo can also be how
+        # you add a date: "约牙医" becomes "约牙医 周四" and the chip
+        # appears. One path in, not two.
+        text, lv = timeword.priority(text)
+        title, iso, clock, _ = timeword.parse(text)
+        self.items[i]["text"] = title
+        if lv:
+            self.items[i]["p"] = lv
+        if iso:
+            self.items[i]["when"] = iso
+            self.items[i]["clock"] = clock
+        if self.commit():
+            self.render()
 
     def setwhen(self, i, iso, clock):
         if not (0 <= i < len(self.items)):
@@ -916,9 +1018,18 @@ class Delegate(NSObject):
         is a surprise."""
         self._guard(self._changed, note)
 
+    def controlTextDidEndEditing_(self, note):
+        """Clicking away keeps the edit. Losing what you typed because you
+        looked at something else is the one outcome nobody wants."""
+        c = note.object()
+        if isinstance(c, TaskText):
+            self._guard(c.finish, True)
+
     @objc.python_method
     def _changed(self, note):
         control = note.object()
+        if isinstance(control, TaskText):
+            return
         raw = control.stringValue()
         if "\n" in raw or "\r" in raw:
             control.setStringValue_("")
@@ -945,6 +1056,17 @@ class Delegate(NSObject):
     @objc.python_method
     def _command(self, control, view, selector):
         name = selector.name() if hasattr(selector, "name") else str(selector)
+        # A task being edited is a different control with different rules:
+        # Enter keeps the change, Escape throws it away.
+        if isinstance(control, TaskText):
+            if name == "insertNewline:":
+                control.finish(True)
+                return True
+            if name == "cancelOperation:":
+                control.setStringValue_(control.was)
+                control.finish(False)
+                return True
+            return False
         if name == "insertNewline:":
             text = control.stringValue()
             control.setStringValue_("")

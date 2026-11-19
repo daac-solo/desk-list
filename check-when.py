@@ -102,5 +102,19 @@ for _d in range(16, 23):
     print(f"  {'✅' if _uniq else '❌'} 11/{_d} 周{'一二三四五六日'[_t.weekday()]}"
           f"  {_labs}  {[i[5:] for i in _isos]}")
 
+print("\n— 优先级：同样是从你打的字里读 —")
+for _t, _want in [("买牛奶!", ("买牛奶",1)), ("买牛奶 !!", ("买牛奶",2)),
+                  ("交房租！", ("交房租",1)), ("普通的一条", ("普通的一条",0)),
+                  ("!", ("!",0)), ("！！", ("！！",0)),
+                  ("买 3 个!", ("买 3 个",1)), ("", ("",0))]:
+    _got = W.priority(_t)
+    _ok = _got == _want
+    bad += not _ok
+    print(f"  {'✅' if _ok else '❌'} {_t!r:14} → {_got}" + ("" if _ok else f"  期待 {_want}"))
+for _l, _m in [(0,""),(1,"!"),(2,"!!"),(9,"!!"),(-1,"")]:
+    _ok = W.mark(_l) == _m
+    bad += not _ok
+    print(f"  {'✅' if _ok else '❌'} mark({_l}) = {W.mark(_l)!r}")
+
 print(f"\n{'全部通过' if not bad else str(bad) + ' 项失败'}")
 raise SystemExit(1 if bad else 0)

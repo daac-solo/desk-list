@@ -195,3 +195,30 @@ def offers(today=None):
         (label((today + timedelta(days=d)).isoformat(), today=today),
          (today + timedelta(days=d)).isoformat())
         for d in days]
+
+
+# --- how much it matters -------------------------------------------------
+# Same idea as the date: it is already in what you typed. A trailing ! is
+# the one punctuation mark that means exactly this in every language
+# anyone writes a todo in.
+
+LEVELS = ["", "重要", "紧急"]
+
+
+def priority(text):
+    """-> (title, level 0..2). Trailing ! or ！, one or two of them."""
+    s = text.rstrip()
+    m = re.search(r"\s*([!！]{1,2})\s*$", s)
+    if not m:
+        return text, 0
+    head = s[:m.start()].rstrip()
+    # "!" alone is not a task with a priority, it is a task called "!".
+    if not head:
+        return text, 0
+    return head, min(len(m.group(1)), 2)
+
+
+def mark(level):
+    """What the number turns into. Nothing for normal — a list where every
+    row carries a badge has no emphasis left to give."""
+    return ("", "!", "!!")[max(0, min(level, 2))]

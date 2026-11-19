@@ -28,7 +28,8 @@ def load():
                             "ok": bool(it.get("ok")),
                             "done_on": it.get("done_on") or "",
                             "when": it.get("when") or "",
-                            "clock": it.get("clock") or ""})
+                            "clock": it.get("clock") or "",
+                            "p": int(it.get("p") or 0)})
         return out
     except FileNotFoundError:
         return []

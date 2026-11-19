@@ -25,6 +25,8 @@ them when you actually want them gone.
 | 今天 / 明天 / 周六 | one tap, while you are writing |
 | `···` | a month, and a time |
 | click a date | change it; `不限` removes it |
+| double-click a task | fix what you wrote |
+| click the number | 普通 → 重要 → 紧急, or type `!` / `!!` |
 | paste several lines | several tasks, not one long one |
 | click the circle | done — a line draws through the text |
 | hover a row | `✕` to delete it |
@@ -84,6 +86,15 @@ older version still opens, and a blank line never becomes a blank task.
 `smoke-input.py` is a smoke script, not a gate: synthetic keystrokes race
 AppKit's focus handling and the same build can score differently on
 consecutive runs. It prints; you judge.
+
+## Priority is the number
+
+The row number is the one glyph with no other job, so it carries the
+priority: `!!` in terracotta, `!` in the accent, and a plain number when
+there is nothing to say. Click it to cycle, or end the line with `!`.
+
+A list where every row wears a badge has no emphasis left to give, so
+normal rows stay numbers.
 
 ## Design
 
