@@ -25,12 +25,25 @@ from Foundation import NSMakeRect, NSObject
 
 import deskkit as k
 import tasks as store
+# Not `as W`: W is already the panel width in this file, and
+# timeword.parse() on an int throws inside a PyObjC delegate, where the
+# traceback is swallowed — every keystroke failed with one
+# opaque line in the log. Same shape as the duplicate addDays.
+import when as timeword
 
 APP = "desk-list"
+# Sharper than the first pass. The soft version was a glass slab: 20pt
+# corners, 32pt rows, nothing between them. Everything blurred into one
+# shape and the list read as a texture rather than as rows.
+#
+# Sharp here is not thin. It is: a tighter corner so the panel has an
+# edge, rows that touch a hairline so the eye can count them, and one
+# number per row set in tabular figures so the column is a column.
 W = 320
-PAD = 16
-ROW = 32
-T1, T2, T3 = k.SIZES          # 11 / 13 / 17 — three on a screen, counted
+PAD = 14
+ROW = 28
+RULE = 0.5        # the hairline between rows; 1 physical pixel at 2dppx
+T1, T2, T3 = k.SIZES[:3]      # 11 / 13 / 17 — the widget row of the scale
 MAX_ROWS = 10                 # beyond this the list scrolls
 
 
@@ -85,6 +98,8 @@ class Row(NSObject):
         if self is not None:
             self.i = i
             self.owner = owner
+            self.ink = None
+            self.ink_w = 0
         return self
 
     def toggle_(self, _sender):
@@ -101,6 +116,7 @@ class Widget(object):
         self.panel = None
         self.ground = None
         self.field = None
+        self.ghost = None
         self.rows = []
         # Before build(), because render() wires every button to it on its
         # very first line. Building first raised AttributeError inside an
@@ -125,7 +141,7 @@ class Widget(object):
 
     # --- building -----------------------------------------------------
     def build(self):
-        self.panel, self.ground = k.make_panel(W, 300)
+        self.panel, self.ground = k.make_panel(W, 300, radius=12)
         self.ground.on_moved = self.moved
         self.render()
         k.place(self.panel, APP)
@@ -137,11 +153,11 @@ class Widget(object):
 
     def height(self):
         if self.shut:
-            return PAD + T3 + 10 + PAD
+            return PAD + T3 + 8 + PAD
         n = max(len(self.items), 1)
         shown = min(n, MAX_ROWS)
         foot = 28 if any(t["ok"] for t in self.items) else 8
-        return PAD + T3 + 10 + 12 + 32 + 8 + shown * ROW + foot + 8
+        return PAD + T3 + 10 + 12 + 30 + 6 + shown * ROW + foot + 8
 
     def render(self):
         pal = k.palette(k.is_dark())
@@ -177,22 +193,37 @@ class Widget(object):
             self.panel.displayIfNeeded()
             return
 
-        y -= 12 + 32
+        y -= 12 + 30
         self.field = k.FocusField.alloc().initWithFrame_(
-            NSMakeRect(PAD, y, W - PAD * 2, 32))
+            NSMakeRect(PAD, y, W - PAD * 2, 30))
         self.field.setFont_(k.font(T2))
         self.field.setTextColor_(pal["fg"])
         self.field.setPlaceholderString_("写一行，回车")
         self.field.setBezeled_(False)
-        self.field.setDrawsBackground_(True)
-        self.field.setBackgroundColor_(pal["fg"].colorWithAlphaComponent_(0.04))
+        # A hairline, not a fill. A filled field on a glass panel is just
+        # another pane of glass; a line is an edge, and an edge is what
+        # tells you where you can type.
+        self.field.setDrawsBackground_(False)
         self.field.setFocusRingType_(AppKit.NSFocusRingTypeNone)
         self.field.setDelegate_(self.delegate)
         self.field.setWantsLayer_(True)
-        self.field.layer().setCornerRadius_(8)
+        lay = self.field.layer()
+        lay.setCornerRadius_(7)
+        lay.setBorderWidth_(RULE * 2)
+        lay.setBorderColor_(pal["muted"].colorWithAlphaComponent_(0.38).CGColor())
         self.field.setEditable_(True)
         self.field.setSelectable_(True)
         self.ground.addSubview_(self.field)
+
+        # The guess, shown before it is taken. A parser that silently
+        # edits your text is one you stop trusting; this one says what it
+        # heard while you are still typing, and you can delete the word if
+        # it heard wrong.
+        self.ghost = k.label("", T1, pal["accent"])
+        self.ghost.setAlignment_(AppKit.NSTextAlignmentRight)
+        self.ghost.setFrame_(NSMakeRect(W - PAD - 96 - 10, y + 7, 96, 16))
+        self.ghost.setHidden_(True)
+        self.ground.addSubview_(self.ghost)
 
         y -= 8
         if not self.items:
@@ -220,15 +251,29 @@ class Widget(object):
                               # click stops working the moment Python
                               # collects it — silently, of course.
 
-        rv = RowView.alloc().initWithFrame_(NSMakeRect(8, y, W - 16, ROW))
+        rv = RowView.alloc().initWithFrame_(NSMakeRect(PAD - 6, y, W - (PAD - 6) * 2, ROW))
         rv.setWantsLayer_(True)
-        rv.layer().setCornerRadius_(8)
-        rv.tint = pal["fg"].colorWithAlphaComponent_(0.05)
+        rv.layer().setCornerRadius_(6)
+        rv.tint = pal["fg"].colorWithAlphaComponent_(0.06)
         self.ground.addSubview_(rv)
 
+        # One hairline under every row but the last. Rows you can count
+        # read as a list; rows that float read as a wash.
+        if i < min(len(self.items), MAX_ROWS) - 1:
+            line = AppKit.NSView.alloc().initWithFrame_(
+                NSMakeRect(PAD + 16, y - RULE, W - PAD * 2 - 16, RULE))
+            line.setWantsLayer_(True)
+            line.layer().setBackgroundColor_(
+                pal["muted"].colorWithAlphaComponent_(0.22).CGColor())
+            self.ground.addSubview_(line)
+
         num = k.label(str(i + 1), T1, pal["muted"])
+        # Tabular figures: 1 and 10 have to occupy the same width or the
+        # column wanders.
+        num.setFont_(AppKit.NSFont.monospacedDigitSystemFontOfSize_weight_(
+            T1, AppKit.NSFontWeightRegular))
         num.setAlignment_(AppKit.NSTextAlignmentRight)
-        num.setFrame_(NSMakeRect(0, 7, 16, T1 + 6))
+        num.setFrame_(NSMakeRect(0, 5, 16, T1 + 6))
         rv.addSubview_(num)
 
         # The line goes through the characters, which is the point of
@@ -241,15 +286,15 @@ class Widget(object):
             AppKit.NSForegroundColorAttributeName:
                 pal["muted"] if t["ok"] else pal["fg"],
         }
-        if t["ok"]:
-            attrs[AppKit.NSStrikethroughStyleAttributeName] = \
-                AppKit.NSUnderlineStyleSingle
-            attrs[AppKit.NSStrikethroughColorAttributeName] = pal["muted"]
         body = AppKit.NSAttributedString.alloc().initWithString_attributes_(
             t["text"], attrs)
 
+        avail = W - (PAD - 6) * 2 - 24 - 54
+        if t.get("when"):
+            _c = k.label(timeword.label(t["when"], t.get("clock", "")), T1, pal["muted"])
+            avail -= round(_c.intrinsicContentSize().width) + 18
         tx = AppKit.NSTextField.alloc().initWithFrame_(
-            NSMakeRect(24, 5, W - 16 - 24 - 56, 22))
+            NSMakeRect(24, 3, max(avail, 60), 22))
         tx.setAttributedStringValue_(body)
         tx.setBackgroundColor_(AppKit.NSColor.clearColor())
         tx.setBezeled_(False)
@@ -259,16 +304,58 @@ class Widget(object):
         tx.setToolTip_(t["text"])
         rv.addSubview_(tx)
 
+        # The line is a layer, not a text attribute.
+        #
+        # NSStrikethroughStyleAttributeName draws the same line and cannot
+        # be animated — it is simply there on the next render. But the line
+        # arriving IS the moment this app is about: it is the half second
+        # that says the thing is done and still yours. A state that appears
+        # fully formed reads as a redraw; a state that draws reads as an
+        # event.
+        ink = AppKit.CALayer.alloc().init()
+        ink.setBackgroundColor_(pal["muted"].CGColor())
+        w = body.size().width
+        mid = round(tx.frame().size.height / 2.0)
+        ink.setFrame_(AppKit.NSMakeRect(0, mid, w if t["ok"] else 0, RULE * 2))
+        tx.setWantsLayer_(True)
+        tx.layer().addSublayer_(ink)
+        r.ink, r.ink_w = ink, w
+
         x = self.button("✕", T1, pal["muted"], "kill:",
-                        NSMakeRect(W - 16 - 56, 4, 24, 24))
+                        NSMakeRect(W - (PAD - 6) * 2 - 52, 2, 24, 24))
         x.setTarget_(r)
         x.setToolTip_("删除")
         x.setHidden_(True)
         rv.addSubview_(x)
         rv.kill = x
 
+        # The chip. It is the word you typed, lifted out of the sentence —
+        # which is why there is no date picker anywhere in this app.
+        chip_w = 0
+        if t.get("when"):
+            cap = timeword.label(t["when"], t.get("clock", ""))
+            st = timeword.state(t["when"])
+            col = {"overdue": pal["alarm"], "today": pal["accent"]}.get(st, pal["muted"])
+            lab = k.label(cap, T1, col)
+            chip_w = round(lab.intrinsicContentSize().width) + 12
+            holder = AppKit.NSView.alloc().initWithFrame_(
+                NSMakeRect(W - (PAD - 6) * 2 - 52 - chip_w, 4, chip_w, 18))
+            holder.setWantsLayer_(True)
+            hl = holder.layer()
+            hl.setCornerRadius_(5)
+            hl.setBorderWidth_(RULE * 2)
+            hl.setBorderColor_(col.colorWithAlphaComponent_(0.45).CGColor())
+            if st != "later":
+                hl.setBackgroundColor_(col.colorWithAlphaComponent_(0.12).CGColor())
+            lab.setAlignment_(AppKit.NSTextAlignmentCenter)
+            lab.setFrame_(NSMakeRect(0, 1, chip_w, 15))
+            holder.addSubview_(lab)
+            holder.setToolTip_(t["when"] + (" " + t["clock"] if t.get("clock") else ""))
+            rv.addSubview_(holder)
+            chip_w += 6
+
         box = AppKit.NSButton.alloc().initWithFrame_(
-            NSMakeRect(W - 16 - 28, 4, 24, 24))
+            NSMakeRect(W - (PAD - 6) * 2 - 24, 2, 24, 24))
         box.setBordered_(False)
         box.setTitle_("")
         box.setTarget_(r)
@@ -312,7 +399,9 @@ class Widget(object):
         if not lines:
             return
         for text in lines:
-            self.items.append({"text": text, "ok": False, "done_on": ""})
+            title, iso, clock, _ = timeword.parse(text)
+            self.items.append({"text": title, "ok": False, "done_on": "",
+                               "when": iso, "clock": clock})
         if self.commit():
             self.render()
             self.focus()
@@ -323,8 +412,29 @@ class Widget(object):
         t = self.items[i]
         t["ok"] = not t["ok"]
         t["done_on"] = store.today() if t["ok"] else ""
-        if self.commit():
+        if not self.commit():
+            t["ok"] = not t["ok"]      # 没存上就别假装存上了
+            return
+        # Draw the line, then rebuild once it has landed. Rebuilding first
+        # would replace the row mid-stroke and the animation would never
+        # be seen — which is how it worked before, and why the one moment
+        # worth watching was invisible.
+        row = self.rows[i] if i < len(self.rows) else None
+        ink = getattr(row, "ink", None) if row else None
+        if ink is None:
             self.render()
+            return
+        a = AppKit.CABasicAnimation.animationWithKeyPath_("bounds.size.width")
+        a.setFromValue_(ink.bounds().size.width)
+        a.setToValue_(row.ink_w if t["ok"] else 0)
+        a.setDuration_(0.26)
+        a.setTimingFunction_(AppKit.CAMediaTimingFunction.functionWithControlPoints____(
+            0.2, 0.0, 0.0, 1.0))
+        a.setFillMode_("forwards")
+        a.setRemovedOnCompletion_(False)
+        ink.addAnimation_forKey_(a, "strike")
+        AppKit.NSTimer.scheduledTimerWithTimeInterval_repeats_block_(
+            0.30, False, lambda _t: self.render())
 
     def remove(self, i):
         if not (0 <= i < len(self.items)):
@@ -416,22 +526,57 @@ class Delegate(NSObject):
     def clear_(self, _s):
         self.w.clear_done()
 
+    @objc.python_method
+    def _guard(self, fn, *a):
+        """PyObjC discards anything raised inside a delegate callback. The
+        only symptom is AppKit printing "Exception detected while handling
+        key input" — no file, no line, no clue. Never again."""
+        try:
+            return fn(*a)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            return None
+
     def controlTextDidChange_(self, note):
-        """A single-line NSTextField flattens a multi-line paste into one
+        """Two jobs on every keystroke.
+
+        A single-line NSTextField flattens a multi-line paste into one
         string, so "five lines pasted" would have become one very long
-        task. Catch it here instead: if what just landed has line breaks,
-        it was a paste, and it is five tasks."""
+        task. And the time guess is shown here rather than on Enter,
+        because a guess you only see after committing is not a guess, it
+        is a surprise."""
+        self._guard(self._changed, note)
+
+    @objc.python_method
+    def _changed(self, note):
         control = note.object()
         raw = control.stringValue()
         if "\n" in raw or "\r" in raw:
             control.setStringValue_("")
             self.w.add(raw)
+            return
+        g = self.w.ghost
+        if g is None:
+            return
+        _title, iso, clock, eaten = timeword.parse(raw)
+        if iso and eaten:
+            g.setStringValue_("↑ " + timeword.label(iso, clock))
+            g.setHidden_(False)
+        else:
+            g.setHidden_(True)
 
     def control_textView_doCommandBySelector_(self, control, view, selector):
+        return self._guard(self._command, control, view, selector)
+
+    @objc.python_method
+    def _command(self, control, view, selector):
         name = selector.name() if hasattr(selector, "name") else str(selector)
         if name == "insertNewline:":
             text = control.stringValue()
             control.setStringValue_("")
+            if self.w.ghost is not None:
+                self.w.ghost.setHidden_(True)
             self.w.add(text)
             return True
         if name == "cancelOperation:":

@@ -26,7 +26,9 @@ def load():
             if isinstance(it, dict) and str(it.get("text", "")).strip():
                 out.append({"text": str(it["text"]),
                             "ok": bool(it.get("ok")),
-                            "done_on": it.get("done_on") or ""})
+                            "done_on": it.get("done_on") or "",
+                            "when": it.get("when") or "",
+                            "clock": it.get("clock") or ""})
         return out
     except FileNotFoundError:
         return []
