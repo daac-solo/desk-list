@@ -82,5 +82,14 @@ for iso, want in [("2026-11-17","overdue"), ("2026-11-18","today"), ("2026-11-30
     bad += not good
     print(f"  {'✅' if good else '❌'} {iso} → {got}")
 
+print("\n— 一点就定的三个 —")
+for lab, iso in W.offers(today=T):
+    print(f"  {lab} → {iso}")
+_off = dict(W.offers(today=T))
+for lab, want in [("今天","2026-11-18"), ("明天","2026-11-19"), ("周末","2026-11-21")]:
+    good = _off.get(lab) == want
+    bad += not good
+    print(f"  {'✅' if good else '❌'} {lab} = {_off.get(lab)}" + ("" if good else f"  期待 {want}"))
+
 print(f"\n{'全部通过' if not bad else str(bad) + ' 项失败'}")
 raise SystemExit(1 if bad else 0)

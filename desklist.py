@@ -43,6 +43,7 @@ W = 320
 PAD = 14
 ROW = 28
 RULE = 0.5        # the hairline between rows; 1 physical pixel at 2dppx
+CHIPS = 28        # the offer row — only on screen while you are writing
 T1, T2, T3 = k.SIZES[:3]      # 11 / 13 / 17 — the widget row of the scale
 MAX_ROWS = 10                 # beyond this the list scrolls
 
@@ -105,6 +106,168 @@ class RowView(AppKit.NSView):
         self._paint()
 
 
+def _centered():
+    ps = AppKit.NSMutableParagraphStyle.alloc().init()
+    ps.setAlignment_(AppKit.NSTextAlignmentCenter)
+    return ps
+
+
+class Offer(NSObject):
+    """One date chip. Holds the date it stands for, so the click knows."""
+
+    def initWithISO_owner_(self, iso, owner):
+        self = objc.super(Offer, self).init()
+        if self is not None:
+            self.iso = iso
+            self.owner = owner
+        return self
+
+    def pick_(self, _sender):
+        self.owner.choose(self.iso)
+
+
+class More(NSObject):
+    """The ··· chip: a month, for the days the three offers cannot say.
+
+    NSDatePicker, not a hand-drawn grid of buttons. It already knows about
+    months, locales, the first day of the week and the keyboard — all of
+    which a rebuilt calendar gets subtly wrong, and none of which is what
+    this app is about.
+    """
+
+    def initWithOwner_(self, owner):
+        self = objc.super(More, self).init()
+        if self is not None:
+            self.owner = owner
+            self.pop = None
+            self.picker = None
+            self.clock = None
+        return self
+
+    def open_(self, sender):
+        pal = k.palette(k.is_dark())
+        pick = AppKit.NSDatePicker.alloc().initWithFrame_(
+            NSMakeRect(0, 0, 139, 148))
+        pick.setDatePickerStyle_(AppKit.NSDatePickerStyleClockAndCalendar)
+        pick.setDatePickerElements_(AppKit.NSDatePickerElementFlagYearMonthDay)
+        # setBordered_ alone leaves the bezel: the control still draws a
+        # heavy framed box that belongs to no part of this app.
+        pick.setBordered_(False)
+        pick.setBezeled_(False)
+        # That heavy blue frame is the focus ring, not a border — the
+        # picker takes first responder inside the popover and AppKit draws
+        # it a box. setBordered_/setBezeled_ never touched it.
+        pick.setFocusRingType_(AppKit.NSFocusRingTypeNone)
+        pick.setDrawsBackground_(False)
+        pick.setTextColor_(pal["fg"])
+        # 11月 and 日一二三四五六, not Nov and Su Mo Tu. The control knows
+        # how; it just needs to be told whose calendar this is.
+        try:
+            pick.setLocale_(AppKit.NSLocale.alloc().initWithLocaleIdentifier_("zh_CN"))
+        except Exception:
+            pass
+        try:
+            pick.setDateValue_(AppKit.NSDate.date())
+        except Exception:
+            pass
+        pick.setTarget_(self)
+        pick.setAction_("picked:")
+        self.picker = pick
+
+        # And a time, because "明天" is often "明天几点". Textual, not a
+        # clock face: you know the hour, you should be able to type it.
+        clock = AppKit.NSDatePicker.alloc().initWithFrame_(
+            NSMakeRect(0, 0, 70, 20))
+        clock.setDatePickerStyle_(AppKit.NSDatePickerStyleTextField)
+        clock.setDatePickerElements_(AppKit.NSDatePickerElementFlagHourMinute)
+        clock.setBordered_(False)
+        clock.setBezeled_(False)
+        clock.setDrawsBackground_(False)
+        clock.setFocusRingType_(AppKit.NSFocusRingTypeNone)
+        clock.setTextColor_(pal["accent"] if self.owner.pending_clock else pal["muted"])
+        clock.setFont_(k.font(T2))
+        cal = AppKit.NSCalendar.currentCalendar()
+        comps = AppKit.NSDateComponents.alloc().init()
+        hh, mm = ((int(x) for x in self.owner.pending_clock.split(":"))
+                  if self.owner.pending_clock else (9, 0))
+        comps.setYear_(2026); comps.setMonth_(1); comps.setDay_(1)
+        comps.setHour_(hh); comps.setMinute_(mm)
+        try:
+            clock.setDateValue_(cal.dateFromComponents_(comps))
+        except Exception:
+            pass
+        clock.setTarget_(self)
+        clock.setAction_("clocked:")
+        self.clock = clock
+
+        none = AppKit.NSButton.alloc().initWithFrame_(NSMakeRect(0, 0, 34, 20))
+        none.setBordered_(False)
+        an = AppKit.NSMutableAttributedString.alloc().initWithString_("不限")
+        an.addAttribute_value_range_(AppKit.NSForegroundColorAttributeName,
+                                     pal["muted"], (0, 2))
+        an.addAttribute_value_range_(AppKit.NSFontAttributeName, k.font(T1), (0, 2))
+        none.setAttributedTitle_(an)
+        none.setTarget_(self)
+        none.setAction_("noclock:")
+
+        vc = AppKit.NSViewController.alloc().init()
+        host = AppKit.NSView.alloc().initWithFrame_(NSMakeRect(0, 0, 163, 210))
+        pick.setFrame_(NSMakeRect(12, 50, 139, 148))
+        host.addSubview_(pick)
+
+        line = AppKit.NSView.alloc().initWithFrame_(NSMakeRect(12, 40, 139, RULE))
+        line.setWantsLayer_(True)
+        line.layer().setBackgroundColor_(
+            pal["muted"].colorWithAlphaComponent_(0.25).CGColor())
+        host.addSubview_(line)
+
+        clock.setFrame_(NSMakeRect(12, 12, 70, 20))
+        none.setFrame_(NSMakeRect(113, 12, 38, 20))
+        host.addSubview_(clock)
+        host.addSubview_(none)
+        vc.setView_(host)
+
+        pop = AppKit.NSPopover.alloc().init()
+        pop.setContentViewController_(vc)
+        pop.setBehavior_(AppKit.NSPopoverBehaviorTransient)
+        # Follow the widget, not the system: 夜山 is a choice this app made.
+        pop.setAppearance_(AppKit.NSAppearance.appearanceNamed_(
+            AppKit.NSAppearanceNameVibrantDark if k.is_dark()
+            else AppKit.NSAppearanceNameVibrantLight))
+        pop.setContentSize_(AppKit.NSMakeSize(163, 210))
+        self.pop = pop
+        pop.showRelativeToRect_ofView_preferredEdge_(
+            sender.bounds(), sender, AppKit.NSRectEdgeMaxY)
+
+    def clocked_(self, sender):
+        d = sender.dateValue()
+        c = AppKit.NSCalendar.currentCalendar().components_fromDate_(
+            AppKit.NSCalendarUnitHour | AppKit.NSCalendarUnitMinute, d)
+        self.owner.pending_clock = "%02d:%02d" % (c.hour(), c.minute())
+        # A time with no day means today — picking 3pm and nothing else
+        # should not file the task under no date at all.
+        if not self.owner.pending:
+            self.owner.pending = timeword.offers()[0][1]
+        self.owner.refresh()
+
+    def noclock_(self, _sender):
+        self.owner.pending_clock = ""
+        if self.pop is not None:
+            self.pop.performClose_(None)
+        self.owner.refresh()
+
+    def picked_(self, sender):
+        d = sender.dateValue()
+        cal = AppKit.NSCalendar.currentCalendar()
+        c = cal.components_fromDate_(
+            AppKit.NSCalendarUnitYear | AppKit.NSCalendarUnitMonth
+            | AppKit.NSCalendarUnitDay, d)
+        iso = "%04d-%02d-%02d" % (c.year(), c.month(), c.day())
+        if self.pop is not None:
+            self.pop.performClose_(None)
+        self.owner.choose(iso, toggle=False)
+
+
 class Row(NSObject):
     """One task. Owns its own circle so the click knows which task it is."""
 
@@ -137,6 +300,12 @@ class Widget(object):
         self.ghost = None
         self.hint = 0
         self._at = None
+        # The date chosen for the line being written, before it
+        # becomes a task. Cleared on commit and on Escape.
+        self.pending = ""
+        self.pending_clock = ""
+        self.chips = []
+        self._writing = False
         self.rows = []
         # Before build(), because render() wires every button to it on its
         # very first line. Building first raised AttributeError inside an
@@ -177,13 +346,43 @@ class Widget(object):
         self._at = (o.x, o.y)
         k.save_pos(APP, o.x, o.y)
 
+    def reflow(self, raw):
+        """Rebuild for the offer row appearing or leaving, and put the
+        caret back where it was.
+
+        render() replaces the field, so this would otherwise eat the
+        keystroke that triggered it. It runs twice per line — on the first
+        character and when the line is cleared — not on every key.
+        """
+        self.render()
+        if self.field is None:
+            return
+        self.field.setStringValue_(raw)
+        self.focus()
+        ed = self.panel.fieldEditor_forObject_(False, self.field)
+        if ed is not None:
+            ed.setSelectedRange_(AppKit.NSMakeRange(len(raw), 0))
+
+    def composing(self):
+        """Only while there is something to attach a date to. At rest the
+        widget is a list, not a form — which is the whole reason it can
+        live on a desktop.
+
+        Reads the flag, not the field. render() rebuilds the field empty
+        before this runs, so asking the control said "not writing" every
+        time and the offer row reserved its height without ever drawing
+        itself.
+        """
+        return self._writing
+
     def height(self):
         if self.shut:
             return PAD + T3 + 8 + PAD
         n = max(len(self.items), 1)
         shown = min(n, MAX_ROWS)
         foot = 28 if any(t["ok"] for t in self.items) else 8
-        return PAD + T3 + 10 + 12 + 30 + 6 + shown * ROW + foot + 8
+        chips = CHIPS if self.composing() else 0
+        return PAD + T3 + 10 + 12 + 30 + chips + 6 + shown * ROW + foot + 8
 
     def render(self):
         pal = k.palette(k.is_dark())
@@ -232,11 +431,15 @@ class Widget(object):
         self.field.setDrawsBackground_(False)
         self.field.setFocusRingType_(AppKit.NSFocusRingTypeNone)
         self.field.setDelegate_(self.delegate)
-        self.field.setWantsLayer_(True)
-        lay = self.field.layer()
-        lay.setCornerRadius_(7)
-        lay.setBorderWidth_(RULE * 2)
-        lay.setBorderColor_(pal["muted"].colorWithAlphaComponent_(0.38).CGColor())
+        # No box. A rounded rectangle around the one place you type is
+        # chrome explaining something the caret already says. One hairline
+        # underneath is enough to say "the line is here".
+        rule = AppKit.NSView.alloc().initWithFrame_(
+            NSMakeRect(PAD, y - 1, W - PAD * 2, RULE))
+        rule.setWantsLayer_(True)
+        rule.layer().setBackgroundColor_(
+            pal["muted"].colorWithAlphaComponent_(0.3).CGColor())
+        self.ground.addSubview_(rule)
         self.field.setEditable_(True)
         self.field.setSelectable_(True)
         self.ground.addSubview_(self.field)
@@ -250,6 +453,62 @@ class Widget(object):
         self.ghost.setFrame_(NSMakeRect(W - PAD - 96 - 10, y + 7, 96, 16))
         self.ghost.setHidden_(True)
         self.ground.addSubview_(self.ghost)
+
+        # The offers. They appear when you start writing and leave when
+        # the line does — visible enough that nothing has to be explained,
+        # small enough that the widget at rest is still a list.
+        self.chips = []
+        if self.composing():
+            y -= CHIPS
+            cx = PAD
+            for cap, iso in timeword.offers():
+                on = (self.pending == iso)
+                btn = AppKit.NSButton.alloc().initWithFrame_(
+                    NSMakeRect(cx, y + 2, 40, 22))
+                btn.setBordered_(False)
+                col = pal["accent"] if on else pal["muted"]
+                a = AppKit.NSMutableAttributedString.alloc().initWithString_(cap)
+                a.addAttribute_value_range_(AppKit.NSForegroundColorAttributeName,
+                                            col, (0, len(cap)))
+                a.addAttribute_value_range_(AppKit.NSFontAttributeName,
+                                            k.font(T1, AppKit.NSFontWeightSemibold
+                                                   if on else AppKit.NSFontWeightRegular),
+                                            (0, len(cap)))
+                a.addAttribute_value_range_(AppKit.NSParagraphStyleAttributeName,
+                                            _centered(), (0, len(cap)))
+                btn.setAttributedTitle_(a)
+                # Four boxes for four words is four times the chrome the
+                # words need. Selection is colour and weight.
+                off = Offer.alloc().initWithISO_owner_(iso, self)
+                self.chips.append(off)
+                btn.setTarget_(off)
+                btn.setAction_("pick:")
+                self.ground.addSubview_(btn)
+                cx += 44
+
+            # Anything the three cannot say.
+            picked_other = bool(self.pending) and self.pending not in [
+                iso for _c, iso in timeword.offers()]
+            col = pal["accent"] if picked_other else pal["muted"]
+            cap = timeword.label(self.pending) if picked_other else "···"
+            more = AppKit.NSButton.alloc().initWithFrame_(
+                NSMakeRect(cx, y + 2, 50 if picked_other else 32, 22))
+            more.setBordered_(False)
+            am = AppKit.NSMutableAttributedString.alloc().initWithString_(cap)
+            am.addAttribute_value_range_(AppKit.NSForegroundColorAttributeName,
+                                         col, (0, len(cap)))
+            am.addAttribute_value_range_(AppKit.NSFontAttributeName,
+                                         k.font(T1, AppKit.NSFontWeightSemibold
+                                                if picked_other else AppKit.NSFontWeightRegular),
+                                         (0, len(cap)))
+            am.addAttribute_value_range_(AppKit.NSParagraphStyleAttributeName,
+                                         _centered(), (0, len(cap)))
+            more.setAttributedTitle_(am)
+            self._more = More.alloc().initWithOwner_(self)
+            more.setTarget_(self._more)
+            more.setAction_("open:")
+            more.setToolTip_("其他日子")
+            self.ground.addSubview_(more)
 
         y -= 8
         if not self.items:
@@ -367,16 +626,11 @@ class Widget(object):
             st = timeword.state(t["when"])
             col = {"overdue": pal["alarm"], "today": pal["accent"]}.get(st, pal["muted"])
             lab = k.label(cap, T1, col)
-            chip_w = round(lab.intrinsicContentSize().width) + 12
+            chip_w = round(lab.intrinsicContentSize().width) + 4
             holder = AppKit.NSView.alloc().initWithFrame_(
                 NSMakeRect(W - (PAD - 6) * 2 - 52 - chip_w, 4, chip_w, 18))
-            holder.setWantsLayer_(True)
-            hl = holder.layer()
-            hl.setCornerRadius_(5)
-            hl.setBorderWidth_(RULE * 2)
-            hl.setBorderColor_(col.colorWithAlphaComponent_(0.45).CGColor())
-            if st != "later":
-                hl.setBackgroundColor_(col.colorWithAlphaComponent_(0.12).CGColor())
+            # The date needs no box either. Overdue is terracotta, today
+            # is the accent, later is muted — the colour is the status.
             lab.setAlignment_(AppKit.NSTextAlignmentCenter)
             lab.setFrame_(NSMakeRect(0, 1, chip_w, 15))
             holder.addSubview_(lab)
@@ -437,8 +691,15 @@ class Widget(object):
             return
         for text in lines:
             title, iso, clock, _ = timeword.parse(text)
+            # A tap beats a guess: if you pressed 明天, that is the answer,
+            # whatever the sentence happens to contain.
+            if self.pending:
+                iso = self.pending
+                clock = self.pending_clock or clock
             self.items.append({"text": title, "ok": False, "done_on": "",
                                "when": iso, "clock": clock})
+        self.pending = ""
+        self.pending_clock = ""
         if self.commit():
             self.hint += 1
             self.render()
@@ -480,6 +741,18 @@ class Widget(object):
         self.items.pop(i)
         if self.commit():
             self.render()
+
+    def refresh(self):
+        raw = self.field.stringValue() if self.field is not None else ""
+        self.reflow(raw)
+
+    def choose(self, iso, toggle=True):
+        # Pressing the one already chosen takes it off again — otherwise
+        # the only way out of a mis-tap is to clear the whole line. The
+        # calendar does not toggle: you picked a day, you meant that day.
+        self.pending = ("" if self.pending == iso else iso) if toggle else iso
+        raw = self.field.stringValue() if self.field is not None else ""
+        self.reflow(raw)
 
     def untime(self, i):
         if not (0 <= i < len(self.items)):
@@ -602,6 +875,11 @@ class Delegate(NSObject):
             control.setStringValue_("")
             self.w.add(raw)
             return
+        writing = bool(raw.strip())
+        if writing != self.w._writing:
+            self.w._writing = writing
+            self.w.reflow(raw)
+            return
         g = self.w.ghost
         if g is None:
             return
@@ -623,10 +901,16 @@ class Delegate(NSObject):
             control.setStringValue_("")
             if self.w.ghost is not None:
                 self.w.ghost.setHidden_(True)
+            self.w._writing = False
             self.w.add(text)
             return True
         if name == "cancelOperation:":
             control.setStringValue_("")
+            self.w.pending = ""
+            self.w.pending_clock = ""
+            if self.w._writing:
+                self.w._writing = False
+                self.w.reflow("")
             return True
         return False
 

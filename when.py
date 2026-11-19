@@ -166,3 +166,19 @@ def state(iso, today=None):
     except ValueError:
         return ""
     return "overdue" if d < today else ("today" if d == today else "later")
+
+
+# --- the one-tap offers --------------------------------------------------
+# Typing "周四" works and always will, but it asks you to know that it
+# works. These are the same thing with nothing to know: you see 今天, you
+# press 今天. The typed path stays for everything these four cannot say.
+
+def offers(today=None):
+    """-> [(label, iso), ...] — today, tomorrow, and the coming weekend."""
+    today = today or date.today()
+    out = [("今天", today.isoformat()),
+           ("明天", (today + timedelta(days=1)).isoformat())]
+    # Saturday, unless today is the weekend, in which case next Saturday.
+    ahead = (5 - today.weekday()) % 7 or 7
+    out.append(("周末", (today + timedelta(days=ahead)).isoformat()))
+    return out
