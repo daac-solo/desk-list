@@ -4,7 +4,9 @@ A task list that lives on the macOS desktop. Type a line, press Return.
 Click the circle when it's done — the task doesn't disappear, it gets a
 line drawn through it and stays.
 
-<!-- screenshot -->
+![桌面清单](screenshot.png)
+
+南山（浅）/ 夜山（深）跟随系统。
 
 ## Why it finishes tasks instead of deleting them
 
