@@ -46,6 +46,21 @@ RULE = 0.5        # the hairline between rows; 1 physical pixel at 2dppx
 T1, T2, T3 = k.SIZES[:3]      # 11 / 13 / 17 — the widget row of the scale
 MAX_ROWS = 10                 # beyond this the list scrolls
 
+# The placeholder is the only instruction this app has, so it teaches by
+# shape rather than by sentence: you see where the time goes, you do not
+# read about it. It rotates because one example teaches one form, and
+# there are four worth knowing.
+#
+# This exists because the feature was invisible. Typing a time worked
+# from the first build and nobody could have known — the same mistake as
+# a shortcut printed nowhere, which this codebase has now made twice.
+HINTS = [
+    "约牙医 周四 ⏎",
+    "交房租 明天 ⏎",
+    "standup 10am ⏎",
+    "体检 12/3 ⏎",
+]
+
 
 class RowView(AppKit.NSView):
     """One row, so it can know the pointer is over it.
@@ -108,6 +123,9 @@ class Row(NSObject):
     def kill_(self, _sender):
         self.owner.remove(self.i)
 
+    def untime_(self, _sender):
+        self.owner.untime(self.i)
+
 
 class Widget(object):
     def __init__(self):
@@ -117,6 +135,8 @@ class Widget(object):
         self.ground = None
         self.field = None
         self.ghost = None
+        self.hint = 0
+        self._at = None
         self.rows = []
         # Before build(), because render() wires every button to it on its
         # very first line. Building first raised AttributeError inside an
@@ -149,6 +169,12 @@ class Widget(object):
 
     def moved(self):
         o = self.panel.frame().origin
+        # Nothing moved, nothing to write. A save that records the place
+        # the widget already was is harmless on its own and is also the
+        # fingerprint of a drag that never happened.
+        if self._at == (o.x, o.y):
+            return
+        self._at = (o.x, o.y)
         k.save_pos(APP, o.x, o.y)
 
     def height(self):
@@ -198,7 +224,7 @@ class Widget(object):
             NSMakeRect(PAD, y, W - PAD * 2, 30))
         self.field.setFont_(k.font(T2))
         self.field.setTextColor_(pal["fg"])
-        self.field.setPlaceholderString_("写一行，回车")
+        self.field.setPlaceholderString_(HINTS[self.hint % len(HINTS)])
         self.field.setBezeled_(False)
         # A hairline, not a fill. A filled field on a glass panel is just
         # another pane of glass; a line is an edge, and an edge is what
@@ -333,6 +359,10 @@ class Widget(object):
         # which is why there is no date picker anywhere in this app.
         chip_w = 0
         if t.get("when"):
+            # Clickable, because the guess can be wrong. Without this the
+            # only way to fix a date the parser got from your sentence is
+            # to delete the task and type it again — which is what makes
+            # people stop using the clever thing.
             cap = timeword.label(t["when"], t.get("clock", ""))
             st = timeword.state(t["when"])
             col = {"overdue": pal["alarm"], "today": pal["accent"]}.get(st, pal["muted"])
@@ -350,7 +380,14 @@ class Widget(object):
             lab.setAlignment_(AppKit.NSTextAlignmentCenter)
             lab.setFrame_(NSMakeRect(0, 1, chip_w, 15))
             holder.addSubview_(lab)
-            holder.setToolTip_(t["when"] + (" " + t["clock"] if t.get("clock") else ""))
+            holder.setToolTip_("点掉时间")
+            hit = AppKit.NSButton.alloc().initWithFrame_(
+                NSMakeRect(0, 0, chip_w, 18))
+            hit.setBordered_(False)
+            hit.setTitle_("")
+            hit.setTarget_(r)
+            hit.setAction_("untime:")
+            holder.addSubview_(hit)
             rv.addSubview_(holder)
             chip_w += 6
 
@@ -403,6 +440,7 @@ class Widget(object):
             self.items.append({"text": title, "ok": False, "done_on": "",
                                "when": iso, "clock": clock})
         if self.commit():
+            self.hint += 1
             self.render()
             self.focus()
 
@@ -440,6 +478,14 @@ class Widget(object):
         if not (0 <= i < len(self.items)):
             return
         self.items.pop(i)
+        if self.commit():
+            self.render()
+
+    def untime(self, i):
+        if not (0 <= i < len(self.items)):
+            return
+        self.items[i]["when"] = ""
+        self.items[i]["clock"] = ""
         if self.commit():
             self.render()
 
