@@ -174,11 +174,24 @@ def state(iso, today=None):
 # press 今天. The typed path stays for everything these four cannot say.
 
 def offers(today=None):
-    """-> [(label, iso), ...] — today, tomorrow, and the coming weekend."""
+    """-> [(label, iso), ...] — today, tomorrow, and the coming Saturday.
+
+    The label comes from label(), not from a string written here. Pressing
+    一个词 and then seeing a different word on the chip is a small lie, and
+    it was exactly what happened: the third offer said 周末 and the chip it
+    produced said 周六. Deriving both from one function makes them agree by
+    construction rather than because someone remembered to keep them in
+    step.
+    """
     today = today or date.today()
-    out = [("今天", today.isoformat()),
-           ("明天", (today + timedelta(days=1)).isoformat())]
-    # Saturday, unless today is the weekend, in which case next Saturday.
-    ahead = (5 - today.weekday()) % 7 or 7
-    out.append(("周末", (today + timedelta(days=ahead)).isoformat()))
-    return out
+    ahead = (5 - today.weekday()) % 7 or 7     # the coming Saturday
+    # On a Friday the coming Saturday IS tomorrow, and the row offered
+    # 今天 / 明天 / 明天 — two chips for one day, one of them pointless.
+    # Three offers have to be three days.
+    if ahead <= 1:
+        ahead += 7
+    days = [0, 1, ahead]
+    return [((today + timedelta(days=d)).isoformat()) for d in days] and [
+        (label((today + timedelta(days=d)).isoformat(), today=today),
+         (today + timedelta(days=d)).isoformat())
+        for d in days]

@@ -86,10 +86,21 @@ print("\n— 一点就定的三个 —")
 for lab, iso in W.offers(today=T):
     print(f"  {lab} → {iso}")
 _off = dict(W.offers(today=T))
-for lab, want in [("今天","2026-11-18"), ("明天","2026-11-19"), ("周末","2026-11-21")]:
+for lab, want in [("今天","2026-11-18"), ("明天","2026-11-19"), ("周六","2026-11-21")]:
     good = _off.get(lab) == want
     bad += not good
     print(f"  {'✅' if good else '❌'} {lab} = {_off.get(lab)}" + ("" if good else f"  期待 {want}"))
+
+print("\n— 三个一点就定的，在一周七天里都必须是三个不同的日子 —")
+for _d in range(16, 23):
+    _t = date(2026, 11, _d)
+    _o = W.offers(today=_t)
+    _isos = [i for _l, i in _o]
+    _labs = [l for l, _i in _o]
+    _uniq = len(set(_isos)) == 3 and len(set(_labs)) == 3
+    bad += not _uniq
+    print(f"  {'✅' if _uniq else '❌'} 11/{_d} 周{'一二三四五六日'[_t.weekday()]}"
+          f"  {_labs}  {[i[5:] for i in _isos]}")
 
 print(f"\n{'全部通过' if not bad else str(bad) + ' 项失败'}")
 raise SystemExit(1 if bad else 0)

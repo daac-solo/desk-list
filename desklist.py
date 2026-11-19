@@ -45,7 +45,8 @@ ROW = 28
 RULE = 0.5        # the hairline between rows; 1 physical pixel at 2dppx
 CHIPS = 28        # the offer row — only on screen while you are writing
 T1, T2, T3 = k.SIZES[:3]      # 11 / 13 / 17 — the widget row of the scale
-MAX_ROWS = 10                 # beyond this the list scrolls
+MAX_ROWS = 10                 # beyond this the list says so rather than
+                              # silently dropping what you wrote
 
 # The placeholder is the only instruction this app has, so it teaches by
 # shape rather than by sentence: you see where the time goes, you do not
@@ -135,14 +136,36 @@ class More(NSObject):
     this app is about.
     """
 
-    def initWithOwner_(self, owner):
+    def initWithOwner_index_(self, owner, idx):
+        """idx = -1 为正在写的那一行，否则是清单里第 idx 条。
+
+        同一个面板两处可达，因为这就是同一件事。点一枚已有的日期牌应该
+        能改它 —— 原来点一下直接把时间删了，那是把"改"和"删"做成了同
+        一个动作，而人只会按到前者。
+        """
         self = objc.super(More, self).init()
         if self is not None:
             self.owner = owner
+            self.idx = idx
             self.pop = None
             self.picker = None
             self.clock = None
         return self
+
+    @objc.python_method
+    def cur(self):
+        if self.idx < 0:
+            return self.owner.pending, self.owner.pending_clock
+        t = self.owner.items[self.idx]
+        return t.get("when", ""), t.get("clock", "")
+
+    @objc.python_method
+    def put(self, iso, clock):
+        if self.idx < 0:
+            self.owner.pending, self.owner.pending_clock = iso, clock
+            self.owner.refresh()
+        else:
+            self.owner.setwhen(self.idx, iso, clock)
 
     def open_(self, sender):
         pal = k.palette(k.is_dark())
@@ -167,7 +190,15 @@ class More(NSObject):
         except Exception:
             pass
         try:
-            pick.setDateValue_(AppKit.NSDate.date())
+            _i, _c = self.cur()
+            if _i:
+                cal0 = AppKit.NSCalendar.currentCalendar()
+                cp = AppKit.NSDateComponents.alloc().init()
+                y_, m_, d_ = (int(x) for x in _i.split("-"))
+                cp.setYear_(y_); cp.setMonth_(m_); cp.setDay_(d_)
+                pick.setDateValue_(cal0.dateFromComponents_(cp))
+            else:
+                pick.setDateValue_(AppKit.NSDate.date())
         except Exception:
             pass
         pick.setTarget_(self)
@@ -184,12 +215,12 @@ class More(NSObject):
         clock.setBezeled_(False)
         clock.setDrawsBackground_(False)
         clock.setFocusRingType_(AppKit.NSFocusRingTypeNone)
-        clock.setTextColor_(pal["accent"] if self.owner.pending_clock else pal["muted"])
+        _iso, _clk = self.cur()
+        clock.setTextColor_(pal["accent"] if _clk else pal["muted"])
         clock.setFont_(k.font(T2))
         cal = AppKit.NSCalendar.currentCalendar()
         comps = AppKit.NSDateComponents.alloc().init()
-        hh, mm = ((int(x) for x in self.owner.pending_clock.split(":"))
-                  if self.owner.pending_clock else (9, 0))
+        hh, mm = ((int(x) for x in _clk.split(":")) if _clk else (9, 0))
         comps.setYear_(2026); comps.setMonth_(1); comps.setDay_(1)
         comps.setHour_(hh); comps.setMinute_(mm)
         try:
@@ -243,18 +274,20 @@ class More(NSObject):
         d = sender.dateValue()
         c = AppKit.NSCalendar.currentCalendar().components_fromDate_(
             AppKit.NSCalendarUnitHour | AppKit.NSCalendarUnitMinute, d)
-        self.owner.pending_clock = "%02d:%02d" % (c.hour(), c.minute())
+        iso, _ = self.cur()
         # A time with no day means today — picking 3pm and nothing else
         # should not file the task under no date at all.
-        if not self.owner.pending:
-            self.owner.pending = timeword.offers()[0][1]
-        self.owner.refresh()
+        self.put(iso or timeword.offers()[0][1],
+                 "%02d:%02d" % (c.hour(), c.minute()))
 
     def noclock_(self, _sender):
-        self.owner.pending_clock = ""
+        """不限 clears the time. On an existing task it clears the date
+        too — that is the delete, and it lives behind a word rather than
+        behind the chip itself."""
         if self.pop is not None:
             self.pop.performClose_(None)
-        self.owner.refresh()
+        iso, _ = self.cur()
+        self.put("" if self.idx >= 0 else iso, "")
 
     def picked_(self, sender):
         d = sender.dateValue()
@@ -265,7 +298,8 @@ class More(NSObject):
         iso = "%04d-%02d-%02d" % (c.year(), c.month(), c.day())
         if self.pop is not None:
             self.pop.performClose_(None)
-        self.owner.choose(iso, toggle=False)
+        _i, clk = self.cur()
+        self.put(iso, clk)
 
 
 class Row(NSObject):
@@ -278,6 +312,7 @@ class Row(NSObject):
             self.owner = owner
             self.ink = None
             self.ink_w = 0
+            self.more = None
         return self
 
     def toggle_(self, _sender):
@@ -286,8 +321,7 @@ class Row(NSObject):
     def kill_(self, _sender):
         self.owner.remove(self.i)
 
-    def untime_(self, _sender):
-        self.owner.untime(self.i)
+
 
 
 class Widget(object):
@@ -381,6 +415,8 @@ class Widget(object):
         n = max(len(self.items), 1)
         shown = min(n, MAX_ROWS)
         foot = 28 if any(t["ok"] for t in self.items) else 8
+        if len(self.items) > MAX_ROWS:
+            foot += 20
         chips = CHIPS if self.composing() else 0
         return PAD + T3 + 10 + 12 + 30 + chips + 6 + shown * ROW + foot + 8
 
@@ -504,7 +540,7 @@ class Widget(object):
             am.addAttribute_value_range_(AppKit.NSParagraphStyleAttributeName,
                                          _centered(), (0, len(cap)))
             more.setAttributedTitle_(am)
-            self._more = More.alloc().initWithOwner_(self)
+            self._more = More.alloc().initWithOwner_index_(self, -1)
             more.setTarget_(self._more)
             more.setAction_("open:")
             more.setToolTip_("其他日子")
@@ -522,6 +558,15 @@ class Widget(object):
         for i, t in enumerate(self.items[:MAX_ROWS]):
             y -= ROW
             self.row(i, t, y, pal)
+
+        # Say what is not on screen. Hiding the 11th task and showing
+        # nothing is the same failure as a save that does not save: you
+        # typed it, it is in the file, and the widget says otherwise.
+        hidden = len(self.items) - MAX_ROWS
+        if hidden > 0:
+            more = k.label("还有 %d 条" % hidden, T1, pal["muted"])
+            more.setFrame_(NSMakeRect(PAD + 16, y - 18, 120, 16))
+            self.ground.addSubview_(more)
 
         if any(t["ok"] for t in self.items):
             clr = self.button("清掉已完成", T1, pal["muted"], "clear:",
@@ -634,13 +679,17 @@ class Widget(object):
             lab.setAlignment_(AppKit.NSTextAlignmentCenter)
             lab.setFrame_(NSMakeRect(0, 1, chip_w, 15))
             holder.addSubview_(lab)
-            holder.setToolTip_("点掉时间")
+            holder.setToolTip_("改时间")
             hit = AppKit.NSButton.alloc().initWithFrame_(
                 NSMakeRect(0, 0, chip_w, 18))
             hit.setBordered_(False)
             hit.setTitle_("")
-            hit.setTarget_(r)
-            hit.setAction_("untime:")
+            # Opens the same panel the ··· opens, on this task's date.
+            # It used to clear the date outright, which meant the only
+            # gesture anyone would try was also the destructive one.
+            r.more = More.alloc().initWithOwner_index_(self, i)
+            hit.setTarget_(r.more)
+            hit.setAction_("open:")
             holder.addSubview_(hit)
             rv.addSubview_(holder)
             chip_w += 6
@@ -754,11 +803,11 @@ class Widget(object):
         raw = self.field.stringValue() if self.field is not None else ""
         self.reflow(raw)
 
-    def untime(self, i):
+    def setwhen(self, i, iso, clock):
         if not (0 <= i < len(self.items)):
             return
-        self.items[i]["when"] = ""
-        self.items[i]["clock"] = ""
+        self.items[i]["when"] = iso
+        self.items[i]["clock"] = clock if iso else ""
         if self.commit():
             self.render()
 

@@ -4,11 +4,7 @@ A task list that lives on the macOS desktop. Type a line, press Return.
 Click the circle when it's done — the task doesn't disappear, it gets a
 line drawn through it and stays.
 
-![桌面清单](demo-typing.png)
-
-写到一半它就告诉你听懂了什么 —— `周四` 在右边浮成 `↑ 明天`。
-
-![完成](demo-done.png)
+![桌面清单](screenshot.png)
 
 南山（浅）/ 夜山（深）跟随系统。
 
@@ -26,6 +22,9 @@ them when you actually want them gone.
 | | |
 |---|---|
 | `⏎` | one line, one task |
+| 今天 / 明天 / 周六 | one tap, while you are writing |
+| `···` | a month, and a time |
+| click a date | change it; `不限` removes it |
 | paste several lines | several tasks, not one long one |
 | click the circle | done — a line draws through the text |
 | hover a row | `✕` to delete it |
@@ -52,9 +51,14 @@ Security → Accessibility). Everything else works without it. Permission is
 granted to a binary, so after rebuilding the app you may have to remove
 and re-add it rather than just re-ticking the box.
 
-## Time, without a date picker
+## Time, three ways, none of them a form
 
-Type `约牙医 周四` and 周四 lifts out of the title into a chip. There is no
+Start writing and a row appears: **今天 · 明天 · 周六 · ···**. One tap sets
+the date; `···` opens a month and a time. The row is only there while you
+are writing — at rest this is a list, not a form, which is the whole
+reason it can live on a desktop.
+
+Or just type it: `约牙医 周四` and 周四 lifts out of the title into a chip. There is no
 date picker because you already typed the time — asking you to then click
 it is asking the same question twice. The guess shows up in the field
 while you are still typing, so a parser that heard wrong is one you can
@@ -67,9 +71,15 @@ failure is not "did not understand", it is "understood something you
 never wrote".
 
 ```sh
-python3 check-when.py        # the parser, deterministic
+python3 check-when.py        # the parser and the offers, deterministic
+python3 check-logic.py       # storage, splitting, every boundary
 ./.venv/bin/python smoke-input.py   # typing / ⌘V / focus, by hand
 ```
+
+`check-logic.py` covers the half that can actually lose your work:
+a corrupt file is moved aside rather than read as "you had no tasks", a
+save that fails returns False instead of pretending, a file written by an
+older version still opens, and a blank line never becomes a blank task.
 
 `smoke-input.py` is a smoke script, not a gate: synthetic keystrokes race
 AppKit's focus handling and the same build can score differently on
